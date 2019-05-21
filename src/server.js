@@ -4,10 +4,13 @@ import cors from 'cors';
 import path from 'path';
 import morgan from 'morgan';
 import mongoose from 'mongoose';
-import * as Polls from './controllers/poll_controller';
+import dotenv from 'dotenv';
+import botkit from 'botkit';
+import yelp from 'yelp-fusion';
+
 
 // DB Setup
-const mongoURI = process.env.MONGODB_URI || 'mongodb://localhost/cs52poll';
+const mongoURI = process.env.MONGODB_URI || 'mongodb://localhost/slack-bot';
 mongoose.connect(mongoURI, { useNewUrlParser: true });
 // set mongoose promises to es6 default
 mongoose.Promise = global.Promise;
@@ -21,50 +24,49 @@ app.use(cors());
 // enable/disable http request logging
 app.use(morgan('dev'));
 
-// enable only if you want templating
-app.set('view engine', 'ejs');
-
 // enable only if you want static assets from folder static
 app.use(express.static('static'));
 
-// this just allows us to render ejs from the ../app/views directory
-app.set('views', path.join(__dirname, '../src/views'));
+dotenv.config({ silent: true });
 
 // enable json message body for posting data to API
 app.use(bodyParser.urlencoded({ extended: true }));
 app.use(bodyParser.json());
 
-// additional init stuff should go before hitting the routing
+// botkit controller
+const controller = new botkit.slackbot({
+  debug: false,
+  clientSigningSecret: "964b4284efed8ade57013a7560d2fb2f",
+});
 
-// default index route
-app.get('/', (req, res) => {
-  Polls.getPolls().then((polls) => {
-    res.render('index', { polls });
-  }).catch((error) => {
-    res.send(`error: ${error}`);
+// initialize slackbot
+const slackbot = controller.spawn({
+  token: process.env.SLACK_BOT_TOKEN,
+  // this grabs the slack token we exported earlier
+}).startRTM(err => {
+  // start the real time message client
+  if (err) { throw new Error(err); }
+});
+
+// prepare webhook
+// for now we won't use this but feel free to look up slack webhooks
+controller.setupWebserver(process.env.PORT || 3001, (err, webserver) => {
+  controller.createWebhookEndpoints(webserver, slackbot, () => {
+    if (err) { throw new Error(err); }
   });
 });
 
-app.get('/new', (req, res) => {
-  res.render('new');
-})
-
-app.post('/new', (req, res) => {
-  const newpoll = {
-    text: req.body.text,
-    imageURL: req.body.imageURL,
-  };
-  Polls.createPoll(newpoll).then((poll) => {
-    res.redirect('/');
+controller.hears(['hello', 'hi', 'howdy'], ['direct_message', 'direct_mention', 'mention'], (bot, message) => {
+  bot.api.users.info({ user: message.user }, (err, res) => {
+    if (res) {
+      bot.reply(message, `Hello, ${res.user.profile.display_name}!`);
+    } else {
+      bot.reply(message, 'Hello there!');
+    }
   });
-})
+});
 
-app.post('/vote/:id', (req, res) => {
-  const vote = (req.body.vote === 'up');// convert to bool
-  Polls.vote(req.params.id, vote).then((result) => {
-    res.send(result);
-  });
-})
+const yelpClient = yelp.client(process.env.YELP_API_KEY);
 
 // START THE SERVER
 // =============================================================================
